@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
+import os
 import sys
 sys.path.extend(['.', '..'])
-import arrow
 import argparse
+import gensim
+import numpy as np
 import networkx as nx
 from prettytable import PrettyTable
 
 from src.generators import parse_seq
+from src.generators import extract_kmer
+from src.generators import save_word2vec_format
+
 from src.kmernode2vec import KMerNode2Vec
 
 
@@ -15,7 +20,7 @@ class ParameterParser:
     def __init__(self, print_params: bool = True):
         self.print_params = print_params
         self.parser = argparse.ArgumentParser(
-            description="Run KMerGraph2Vec."
+            description="Run KMer-Node2Vec."
         )
         self.parsed_args = None
 
@@ -30,29 +35,30 @@ class ParameterParser:
         self.parser.add_argument(
             '--input-seqs-dir',
             nargs='?',
-            default='data_dir/input/demo/',
+            default='../data_dir/input/',
             help='Sequence files directory.'
         )
 
         self.parser.add_argument(
             '--edge-list-file',
             nargs='?',
-            default='data_dir/output/edge-list-file-{}.edg'.format(arrow.utcnow().format('YYYYMMDD-HHmm')),
+            default='../data_dir/output/edge-list-file.edg',
             help='Edge file path.'
         )
 
         self.parser.add_argument(
             '--output',
             nargs='?',
-            default='data_dir/output/kmernode2vec-{}.txt'.format(arrow.utcnow().format('YYYYMMDD-HHmm')),
-            help='Embeddings path.'
+            default='../data_dir/output/kmer-embedding.txt',
+            help='K-mer embedding path.'
         )
 
         self.parser.add_argument(
             '--mer',
             nargs='?',
-            default=8,
-            help='Length of a sliding window to fragment mer.'
+            default=[6, 7, 8],
+            help='Length of a sliding window to fragment mer. '
+                 'If multiple mers are given, the multi-scale strategy would be employed.'
         )
 
         self.parser.add_argument(
@@ -133,27 +139,68 @@ class ParameterParser:
 
 
 def main(args):
-    clf = KMerNode2Vec(
-        p=args.P,
-        q=args.Q,
-        dimensions=args.dimensions,
-        num_walks=args.walk_number,
-        walks_length=args.walk_length,
-        window=args.window_size,
-        min_count=args.min_count,
-        epochs=args.epochs,
-        workers=args.workers,
+    pivot_kmers = list()  # store 8-mers
+    seqs = parse_seq([args.input_seqs_dir])
+    for seq in seqs:
+        pivot_kmers.extend(extract_kmer(seq, max(args.mer)))
+
+    kmer2vec_dict = dict()  # save vectors of k-mers in different scales
+    for mer in args.mer:
+        clf = KMerNode2Vec(
+            p=args.P,
+            q=args.Q,
+            dimensions=args.dimensions,
+            num_walks=args.walk_number,
+            walks_length=args.walk_length,
+            window=args.window_size,
+            min_count=args.min_count,
+            epochs=args.epochs,
+            workers=args.workers,
+        )
+        clf.fit(
+            seqs=seqs,
+            mer=mer,
+            path_to_edg_list_file=args.edge_list_file,
+            # path_to_embeddings_file=args.output,
+        )
+        kmer2vec_dict.update(clf.get_embedding_dict())
+
+    final_kmer2vec_dict = dict()  # map 8mers to their final multi-scale vectors
+    for kmer in pivot_kmers:
+        tmp_vecs = list()
+        for mer in args.mer:
+            vec = 0
+            vec_num = len(kmer) - mer + 1
+            for i in range(vec_num):
+                sub_kmer = kmer[i:i + mer]
+                sub_kmer_vec = kmer2vec_dict[sub_kmer]
+                vec += sub_kmer_vec
+            vec /= vec_num
+            tmp_vecs.append(vec)
+
+        final_vec = tmp_vecs[0]
+        for i in range(1, len(tmp_vecs)):
+            final_vec = np.concatenate((final_vec, tmp_vecs[i]), axis=0)
+        final_kmer2vec_dict[kmer] = final_vec
+
+    # save k-mer embedding
+    w2v = gensim.models.keyedvectors.Word2VecKeyedVectors(vector_size=args.dimensions)
+    w2v.index_to_key = final_kmer2vec_dict
+    w2v.vectors = np.array(list(final_kmer2vec_dict.values()))
+    save_word2vec_format(
+        binary=True,
+        fname='kmer_embedding.bin',
+        total_vec=len(final_kmer2vec_dict),
+        vocab=w2v.index_to_key,
+        vectors=w2v.vectors
     )
-    clf.fit(
-        graph=nx.DiGraph(),
-        seqs=parse_seq([args.input_seqs_dir]),
-        mer=args.mer,
-        path_to_edg_list_file=args.edge_list_file,
-        path_to_embeddings_file=args.output,
-    )
+    w2v = gensim.models.keyedvectors.Word2VecKeyedVectors.load_word2vec_format('w2v_model.bin', binary=True)
+    output_fp = "kmer_embedding.txt"
+    w2v.save_word2vec_format(output_fp, binary=False)
 
 
 if __name__ == "__main__":
+    print(os.path.abspath(""))
     cmd_tool = ParameterParser()
     arguments = cmd_tool.parameter_parser()
     main(arguments)

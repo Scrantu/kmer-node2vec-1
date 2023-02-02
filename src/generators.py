@@ -6,19 +6,20 @@ from random import sample
 from Bio import SeqIO
 from math import floor
 from typing import List
-from pecanpy.wrappers import Timer
+from numpy import zeros, dtype, float32 as REAL, ascontiguousarray, fromstring
+from gensim import utils
+from pecanpy.cli import Timer
 
 
-@Timer('load DNA seqs')
 def parse_seq(path_to_input: str):
     """ Return a list containing DNA seqment(s) captured in fna file(s)."""
     seq_files = list()
     for input_file_dir in path_to_input:
+        print(input_file_dir)
         for root, dirs, files in os.walk(input_file_dir):
             for file in files:
                 if file.endswith('.fna'):
                     seq_files.append(os.path.join(root, file))
-
     seqs = list()
     for seq_file in seq_files:
         for seq_record in SeqIO.parse(seq_file, 'fasta'):
@@ -34,6 +35,34 @@ def extract_kmer(seq: str, mer: int):
     """ Return a DNA sequence's k-mers. Slide only a single nucleotide """
     return [seq[i:i + mer] for i in range(len(seq) - mer + 1)]
 
+
+def seg2sentence(segs: List[str], mer: int = 8):
+    """ Express a segment in NLP sentence style.
+    Note:
+        ['segments'] --> ['seg egm gme men ent nts']
+    """
+    return [' '.join(extract_kmer(seg, mer)) for seg in segs]
+
+
+def save_word2vec_format(fname, vocab, vectors, binary=True, total_vec=2):
+    """ Store the input-hidden weight matrix in the same format used by the original
+    C word2vec-tool, for compatibility."""
+    if not (vocab or vectors):
+        raise RuntimeError("no input")
+    if total_vec is None:
+        total_vec = len(vocab)
+    vector_size = vectors.shape[1]
+    assert (len(vocab), vector_size) == vectors.shape
+    with utils.open(fname, 'wb') as fout:
+        print("total_vec:", total_vec, " vector_size:", vector_size)
+        fout.write(utils.to_utf8("%s %s\n" % (total_vec, vector_size)))
+        # store in sorted order: most frequent words at the top
+        for word, row in vocab.items():
+            if binary:
+                row = row.astype(REAL)
+                fout.write(utils.to_utf8(word) + b" " + row.tostring())
+            else:
+                fout.write(utils.to_utf8("%s %s\n" % (word, ' '.join(repr(val) for val in row))))
 
 @Timer('convert DNA seqs to a set of segs')
 def seq2segs(

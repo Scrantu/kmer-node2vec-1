@@ -70,7 +70,6 @@ class KMerNode2Vec:
         self,
         seqs: List[str],
         mer: int,
-        graph: nx.classes.graph.Graph,
         path: str,
     ):
         weight_dict = defaultdict(int)
@@ -78,17 +77,11 @@ class KMerNode2Vec:
             k_mers = extract_kmer(seq, mer)
             for i in range(len(k_mers) - 1):
                 weight_dict[(k_mers[i], k_mers[i + 1])] += 1
-
-        for seq in seqs:
-            k_mers = extract_kmer(seq, mer)
-            for i in range(len(k_mers) - 1):
-                graph.add_edge(
-                    k_mers[i], k_mers[i + 1],
-                    weight=weight_dict[(k_mers[i], k_mers[i + 1])]
-                )
+        
         edge_list = [
-            [u, v, w] for u, v, w in graph.edges(data='weight')
+             (nodes[0], nodes[1], weight) for nodes, weight in weight_dict.items()
         ]
+
         with open(path, 'w', encoding='utf-8') as edge_list_file:
             for edge_pair in edge_list:
                 write_content = str(edge_pair[0]) + '\t' + str(edge_pair[1]) + '\t' + str(edge_pair[2]) + '\n'
@@ -129,7 +122,7 @@ class KMerNode2Vec:
             workers=self.workers,
             epochs=self.epochs,
         )
-
+        
         output_fp = path_to_embeddings_file
         if output_fp.endswith(".npz"):
             np.savez(output_fp, IDs=model.wv.index_to_key, data=model.wv.vectors)
@@ -138,7 +131,6 @@ class KMerNode2Vec:
 
     def fit(
         self,
-        graph: nx.classes.graph.Graph,
         seqs: List[str],
         mer: int,
         path_to_edg_list_file: str,
@@ -154,8 +146,9 @@ class KMerNode2Vec:
             path_to_edg_list_file (str) : path to k-mers' edges list file.
             path_to_embeddings_file (str) : path to k-mers' embeddings file.
         """
-        self._generate_graph_file(seqs, mer, graph, path_to_edg_list_file)
+        self._generate_graph_file(seqs, mer, path_to_edg_list_file)
         graph = self._read_graph()
         walks = self._simulate_walks(graph)
         self._learn_embeddings(walks, path_to_embeddings_file)
+
 
