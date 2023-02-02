@@ -234,5 +234,76 @@ def precision(
                 for k in range(j, len(molecular_lst)):
                     molecular_lst[k] += 1
                 break
+
     time.sleep(1)
     print_precision(molecular_lst, len(I))
+
+
+def retrieval_ananlysis(
+    path_to_subseg_vec: str,
+    path_to_subseg_name: str,
+    path_to_seg_name: str,
+    path_to_faiss_indexes: list,  # 一个列表包含多个不同k下对应的k-mer embedding对应的索引文件
+    max_top_kn: int = 20,
+    top_kn_border: list = [5, 10, 15, 20]
+):
+    print(f"**** retrieval_ananlysis begins ****")
+
+    # sub-segment vectors for query
+    xq = np.loadtxt(path_to_subseg_vec)
+    xq = xq.astype(np.float32)
+
+    # compare two groups of DNA segments
+    obj1 = np.loadtxt(path_to_subseg_name, dtype=np.str_)
+    obj2 = np.loadtxt(path_to_seg_name, dtype=np.str_)
+    print(f"faiss stores {len(obj2)} vectors")
+
+    for path_to_faiss_idx in path_to_faiss_indexes:
+        # read index
+        start_time = time.time()
+        new_index = faiss.read_index(path_to_faiss_idx)
+        new_index.hnsw.efSearch = 2000  # when faiss idx == HNSW
+        print(f"loading faiss index cost {time.time() - start_time:.6f}s")
+
+        # given a certain TopK level, we study which queries to be retrieved successfully or not
+        """
+        1) 找出难检索序列：检查哪些序列在topk水平下总是检索不出来
+        2) (重点)找出同一个query在相同(最大)topk、但不同k-mer的水平下的answers差异
+        """
+        print("**** find retrieved-hard sequences ****")
+        for tk in top_kn_border:
+            # index list most similar to TopK
+            I = getI(new_index, xq, Topk=tk)
+
+            retrieved_queries = set()
+            unretrieved_queries = set()
+            for i in tqdm(range(len(I)), desc='precision'):
+                retrieved_flag = 0  # to signal if obj[i] were successfully retrieved
+                for j in range(len(I[i])):
+                    if compare(obj1[i], obj2[I[i][j]]) == 1:
+                        retrieved_flag = 1
+                if retrieved_flag == 0:
+                    unretrieved_queries.add(obj1[i])
+                else:
+                    retrieved_queries.add(obj1[i])
+
+            for query in retrieved_queries:
+                # tk illustrates the topk level
+                print("faiss index name:"+path_to_faiss_idx, "topk level:"+tk, "state:retrieved", "query:"+query)
+            for query in unretrieved_queries:
+                print("faiss index name:"+path_to_faiss_idx, "topk level:"+tk, "state:unretrieved", "query:"+query)
+
+        print("**** find difference between given query's answers under different k-mer embedding ****")
+
+
+
+
+
+
+
+
+
+
+
+
+
